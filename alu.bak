@@ -1,0 +1,82 @@
+.include "/mit/6.004/jsim/nominal.jsim"
+.include "/mit/6.004/jsim/stdcell.jsim"
+.include "/mit/6.004/jsim/lab3_test_shift.jsim"
+
+.subckt BOOL alufn[3:0] A[31:0] B[31:0] OUT[31:0]
+Xmux A[31:0] B[31:0] alufn0#32 alufn1#32 alufn2#32 alufn3#32 OUT[31:0] mux4
+.ends
+
+.subckt FA a b ci s co
+Xg0 a b z0 xor2
+Xg1 z0 ci s xor2
+Xg2 a b z1 nand2
+Xg3 a ci z2 nand2
+Xg4 b ci z3 nand2
+Xg5 z1 z2 z3 co nand3
+.ends
+
+.subckt ARITH alufn[1:0] A[31:0] B[31:0] S[31:0] Z V N
+Xxor B[31:0] alufn0#32 XB[31:0] xor2
+Xfoo1 A[0] XB[0] alufn0 s[0] cout[0] FA
+Xfoo A[31:1] XB[31:1] cout[30:0] S[31:1] cout[31:1] FA
+Xinv S[31] z0 inverter
+Xinv1 A[31] z1 inverter
+Xinv2 XB[31] z2 inverter
+Xand A[31] XB[31] z0 ou1 and3
+Xand1 z1 z2 S[31] ou2 and3
+Xor ou1 ou2 V or2
+Xnor1 S[31] S[30] S[29] S[28] out1 nor4
+Xnor2 S[27] S[26] S[25] S[24] out2 nor4
+Xnor3 S[23] S[22] S[21] S[20] out3 nor4
+Xnor4 S[19] S[18] S[17] S[16] out4 nor4
+Xnor5 S[15] S[14] S[13] S[12] out5 nor4
+Xnor6 S[11] S[10] S[9] S[8] out6 nor4
+Xnor7 S[7] S[6] S[5] S[4] out7 nor4
+Xnor8 S[3] S[2] S[1] S[0] out8 nor4
+Xand2 out1 out2 out3 out4 out9 and4
+Xand3 out5 out6 out7 out8 out10 and4
+Xand4 out9 out10 Z and2
+Xbuff1 S[31] N buffer
+.ends
+
+.subckt SHIFT alufn[1:0] A[31:0] B[31:0] OUT[31:0]
+Xgnd GND constant0
+Xmuxa B4#32 A[31:0] A[15:0] GND#16 W[31:0] mux2
+Xmuxb B3#32 W[31:0] W[23:0] GND#8 X[31:0] mux2
+Xmuxc B2#32 X[31:0] X[27:0] GND#4 Y[31:0] mux2
+Xmuxd B1#32 Y[31:0] Y[29:0] GND#2 Z[31:0] mux2
+Xmuxe B0#32 Z[31:0] Z[30:0] GND SL[31:0] mux2	
+Xmux1 alufn1#32 A[16:31] GND#16 A[16:31] A[31]#16 AB[0:31] mux2
+Xmux2 alufn1#32 C[8:31] GND#8 C[8:31] A[31]#8 BC[0:31] mux2
+Xmux3 alufn1#32 D[4:31] GND#4 D[4:31] A[31]#4 CD[0:31] mux2
+Xmux4 alufn1#32 E[2:31] GND#2 E[2:31] A[31]#2 DE[0:31] mux2
+Xmux5 alufn1#32 F[1:31] GND F[1:31] A[31]#1 EF[0:31] mux2
+Xmuxf B4#32 A[0:31] AB[0:31] C[0:31] mux2
+Xmuxg B3#32 C[0:31] BC[0:31] D[0:31] mux2
+Xmuxh B2#32 D[0:31] CD[0:31] E[0:31] mux2
+Xmuxi B1#32 E[0:31] DE[0:31] F[0:31] mux2
+Xmuxj B0#32 F[0:31] EF[0:31] SR[0:31] mux2
+Xmuxz alufn0#32 SL[31:0] SR[31:0] OUT[31:0] mux2
+.ends
+
+.subckt CMP alufn3 alufn1 Z V N OUT[31:0]
+Xxor N V outx xor2
+Xor Z outx outy or2
+Xmux alufn1 alufn3 Z outx outy 0 OUT[0] mux4
+Xid OUT[31:1] constant0
+.ends
+
+.subckt alu alufn[4:0] a[31:0] b[31:0] out[31:0] z v n
+
+***Generate outputs from each of BOOL, SHIFT, ARITH, CMP subcircuits:
+xbool alufn[3:0] a[31:0] b[31:0] boolout[31:0] BOOL
+xshift alufn[1:0] a[31:0] b[31:0] shiftout[31:0] SHIFT
+xarith alufn[1:0] a[31:0] b[31:0] arithout[31:0] z v n ARITH
+xcmp alufn[3] alufn[1] z v n cmpout[31:0] CMP
+
+***Combine them, using three multiplexors:
+xmux1 alufn[4]#32 nonbool[31:0] boolout[31:0] out[31:0] mux2
+xmux2 alufn[2]#32 arithshift[31:0] cmpout[31:0] nonbool[31:0] mux2
+xmux3 alufn[3]#32 arithout[31:0] shiftout[31:0] arithshift[31:0] mux2
+
+.ends
