@@ -1,0 +1,464 @@
+.include "nominal.jsim"
+.include "stdcell.jsim"
+.include "projcheckoff.jsim"
+
+
+
+
+
+Xbeta clk reset 0 ia[31:0] id[31:0] ma[31:0] moe mrd[31:0] wr mwd[31:0] beta
+
+Xmem
++ vdd 0 0 ia[11:2] id[31:0]
++ moe 0 0 ma[11:2] mrd[31:0]
++ 0 clk wr ma[11:2] mwd[31:0]
++ $memory width=32 nlocations=1024
++ file="projcheckoff.bin"
+
+Vclk clk 0 pulse(3.3,0,6.7ns,.01ns,.01ns,6.7ns) 
+Vreset reset 0 pwl(0ns 3.3v, 61ns 3.3v, 61.1ns 0v)
+
+.tran 13000ns
+
+
+.subckt join S T 
+.connect S T
+.ends
+
+
+//5-mux
+
+.subckt fivemux sel[2:0] zero one two three four out 
+
+Xidmuxfour sel[0] sel[1] zero one two three muxfourout mux4
+
+Xzeroone sel[2] muxfourout four out mux2
+
+.ends
+
+
+//PC
+.subckt pc clk reset pcsel[2:0] ia[31:0] broff[31:0] jt[31:0] plusfour[31:0]
+
+//get the constant 1
+Xgetone one constant1
+
+// connecting all one bits to one
+.connect resetInput[31] illop[31] Xad[31] Xad[3] illop[2] one
+
+//making other bits to zero
+.connect resetInput[30:0] Xad[30:4] Xad[2:0] illop[1:0] illop[30:3] 0
+
+//making logic for J31 (A.3)
+Xjtand jt[31] ia[31] newJt and2
+
+
+
+// giving bit 31 specially(A.2)
+XfivemuxTwo pcsel[2:0] ia[31] ia[31] newJt illop[31] Xad[31] fiveMuxOut[31] fivemux
+
+
+
+// making an instance of five input mux
+Xpcseltwo pcsel[2] pcsel_buf[2] buffer_4
+Xpcselone pcsel[1] pcsel_buf[1] buffer_4
+Xpcselzero pcsel[0] pcsel_buf[0] buffer_4
+Xfivemux pcsel_buf[2]#29 pcsel_buf[1]#29 pcsel_buf[0]#29 addout[30:2] broff[30:2] jt[30:2] illop[30:2] Xad[30:2] fiveMuxOut[30:2] fivemux
+XfivemuxThree pcsel_buf[2]#2 pcsel_buf[1]#2 pcsel_buf[0]#2 addout[1:0] broff[1:0] 0#2 illop[1:0] Xad[1:0] fiveMuxOut[1:0] fivemux
+
+
+//32bit mux for resetting the pc
+Xresetbuf reset reset_buf buffer_4
+Xmux reset_buf#32 fiveMuxOut[31:0] resetInput[31:0] muxout[31:0] mux2				
+
+// PC 32 bit register to hold next instruciton 
+XprogCounter muxout[31:0] clk#32 ia[31:0] dreg
+
+// connect first two bits of input to output directly because we are always adding 4
+Xjoin ia[1:0] addout[1:0] join
+
+// use just 32 xor and 32 ands to make the adder
+Xnandfirst ia[2] one addout[2] xor2
+Xandtwofirst ia[2] one andout[2] and2
+Xnand ia[31:3] andout[30:2] addout[31:3] xor2
+Xandtwo ia[30:3] andout[29:2] andout[30:3] and2
+
+
+//connect plusfour[31:0] to addout[30:0] except for bit 31 which gots to ia[31] (A.5)
+Xjoinplusfirst addout[30:0] plusfour[30:0] join
+Xjoinplustlast plusfour[31] ia[31] join
+
+.ends
+
+
+
+//Regfile
+.subckt regfile clk werf ra2sel ra[4:0] rb[4:0] rc[4:0] 
++ wdata[31:0] radata[31:0] rbdata[31:0]
+
+Xmux ra2sel#5 rb[4:0] rc[4:0] ra2mux[4:0] mux2
+
+Xfinalandone finalandone finalandone_buf buffer_4
+Xzerobuf 0 zero_buf buffer_4 
+Xandfourone ra2mux[0] ra2mux[1] ra2mux[2] ra2mux[3] andfouroutone and4
+Xandfinalone andfouroutone ra2mux[4] finalandone and2
+Xmuxforceone finalandone_buf#32 bdata[31:0] zero_buf#32 rbdata[31:0] mux2
+
+//forcing zero on address = 31 on a
+Xfinalandtwo finalandtwo finalandtwo_buf buffer_4
+Xandfourtwo ra[0] ra[1] ra[2] ra[3] andfourouttwo and4
+Xandfinaltwo andfourouttwo ra[4] finalandtwo and2
+Xmuxforcetwo finalandtwo_buf#32 adata[31:0] zero_buf#32 radata[31:0] mux2
+
+Xregfile
++ vdd 0 0 ra[4:0] adata[31:0] // A read port
++ vdd 0 0 ra2mux[4:0] bdata[31:0] // B read port 
++ 0 clk werf rc[4:0] wdata[31:0] // write port 
++ $memory width=32 nlocations=31
+
+.ends
+
+
+//ctl
+.subckt ctl reset id[31:26] pcsel[2:0] wasel asel ra2sel bsel alufn[4:0] wdsel[1:0] werf moe wr
+
+
+//forces WR to 0 when RESET=1
+Xmuxforce reset ra2sel 0 wr mux2
+
+Xwrite wr moe inverter
+
+//for ra2sel
+Xra2seland id[30] id[29] id[26] andoutput and3
+Xra2selnand id[31] id[28] id[27] nandoutput nor3
+Xra2selfinal andoutput nandoutput ra2sel and2
+
+//for asel
+Xaseland id[30] id[29] id[28] id[27] aseloutput and4
+Xaseland2 aseloutput id[26] aselout and2
+Xaselinvertbit id[31] aselnot inverter
+Xasel aselnot aselout asel and2
+
+
+Xctl vdd 0 0 id[31:26] // one read port
++ pcsel[2:0] wasel bsel alufn[4:0] wdsel[1:0] werf
++ $memory width=13 nlocations=64 contents=(
++ 0b0111000000001 // opcode=0b000000
++ 0b0111000000001 // opcode=0b000001
++ 0b0111000000001 // opcode=0b000010
++ 0b0111000000001 // opcode=0b000011
++ 0b0111000000001 // opcode=0b000100
++ 0b0111000000001 // opcode=0b000101
++ 0b0111000000001 // opcode=0b000110
++ 0b0111000000001 // opcode=0b000111
++ 0b0111000000001 // opcode=0b001000
++ 0b0111000000001 // opcode=0b001001
++ 0b0111000000001 // opcode=0b001010
++ 0b0111000000001 // opcode=0b001011
++ 0b0111000000001 // opcode=0b001100
++ 0b0111000000001 // opcode=0b001101
++ 0b0111000000001 // opcode=0b001110
++ 0b0111000000001 // opcode=0b001111
++ 0b0111000000001 // opcode=0b010000
++ 0b0111000000001 // opcode=0b010001
++ 0b0111000000001 // opcode=0b010010
++ 0b0111000000001 // opcode=0b010011
++ 0b0111000000001 // opcode=0b010100
++ 0b0111000000001 // opcode=0b010101
++ 0b0111000000001 // opcode=0b010110
++ 0b0111000000001 // opcode=0b010111
++ 0b0000100000101 // opcode=0b011000 LD
++ 0b0000100000000 // opcode=0b011001 ST
++ 0b0111000000001 // opcode=0b011010
++ 0b0100000000001 // opcode=0b011011 JMP
++ 0b1110000000001 // opcode=0b011100 BEQ
++ 0b1110000000001 // opcode=0b011101 BNE
++ 0b0111000000001 // opcode=0b011110			
++ 0b0000011010101 // opcode=0b011111 LDR  					
++ 0b0000000000011 // opcode=0b100000 ADD			
++ 0b0000000001011 // opcode=0b100001 SUB			
++ 0b0111000000001 // opcode=0b100010
++ 0b0111000000001 // opcode=0b100011
++ 0b0000000101011 // opcode=0b100100 CMPEQ
++ 0b0000000111011 // opcode=0b100101 CMPLT
++ 0b0000001101011 // opcode=0b100110 CMPLE
++ 0b0111000000001 // opcode=0b100111
++ 0b0000011000011 // opcode=0b101000 AND
++ 0b0000011110011 // opcode=0b101001 OR
++ 0b0000010110011 // opcode=0b101010 XOR
++ 0b0000011001011 // opcode=0b101011 XNOR
++ 0b0000001000011 // opcode=0b101100 SHL
++ 0b0000001001011 // opcode=0b101101 SHR
++ 0b0000001011011 // opcode=0b101110 SRA
++ 0b0111000000001 // opcode=0b101111
++ 0b0000100000011 // opcode=0b110000 ADDC
++ 0b0000100001011 // opcode=0b110001 SUBC
++ 0b0111000000001 // opcode=0b110010
++ 0b0111000000001 // opcode=0b110011
++ 0b0000100101011 // opcode=0b110100 CMPEQC
++ 0b0000100111011 // opcode=0b110101 CMPLTC
++ 0b0000101101011 // opcode=0b110110 CMPLEC
++ 0b0111000000001 // opcode=0b110111
++ 0b0000111000011 // opcode=0b111000 ANDC
++ 0b0000111110011 // opcode=0b111001 ORC
++ 0b0000110110011 // opcode=0b111010 XORC
++ 0b0000111001011 // opcode=0b111011 XNORC
++ 0b0000101000011 // opcode=0b111100 SHLC
++ 0b0000101001011 // opcode=0b111101 SHRC
++ 0b0000101011011 // opcode=0b111110 SRAC
++ 0b0111000000001 // opcode=0b111111
++)
+
+.ends
+
+
+//Beta
+.subckt beta clk reset irq ia[31:0] id[31:0] ma[31:0] 
++ moe mrd[31:0] wr mwd[31:0]
+
+XgetOne valOne constant1
+
+
+
+// mux for deciding between read data from memory and alu output. This goes to the regfile
+Xwdselbufzero finalwdsel[0] finalwdsel_buf[0] buffer_4
+Xwdselbufone finalwdsel[1] finalwdsel_buf[1] buffer_4 
+Xzerobuf 0 zero_buf buffer_4 
+Xmuxreg finalwdsel_buf[0]#32 finalwdsel_buf[1]#32 plusfour[31:0] ma[31:0] mrd[31:0] zero_buf#32 wdata[31:0] mux4   // can be way more optimized, but not doing it currently
+
+
+//mux for bsel before read data goes to alu input
+Xbeselbuf bsel bsel_buf buffer_4
+Xidinsbuf id[15] id_buf buffer_4
+Xmuxfirstsixt bsel_buf#16 mwd[15:0] id[15:0] bselout[15:0] mux2
+Xmuxlastsixt bsel_buf#16 mwd[31:16] id_buf#16 bselout[31:16] mux2
+
+
+// interrupt in the supervisor mode should have no effect
+Xinverti31 ia[31] invertedia31 inverter
+Xinttrue invertedia31 irq irqtrue and2
+
+//force pcsel to 4 (used by PC)
+Xpcselfone irqtrue interpcsel[0] 0 finalpcsel[0] mux2
+Xpcselftwo irqtrue interpcsel[1] 0 finalpcsel[1] mux2
+Xpcselfthree irqtrue interpcsel[2] valOne finalpcsel[2] mux2
+
+// force wasel to 1 (used by alu input mux)
+Xwaselfone irqtrue wasel valOne finalwasel mux2
+
+//force werf to 1 (used by regfile)
+Xwerffone irqtrue werf valOne finalwerf mux2
+
+//force wdsel[1:0] to 0 (used after ALUout)
+Xwdselfone irqtrue#2 wdsel[1:0] 0#2 finalwdsel[1:0] mux2
+
+//force wr to 0 ( got from control logic, goes as output)
+Xwrfone irqtrue initialwr 0 wr mux2
+
+
+
+
+//make a function of norz for usage in BEQ and BNE (F)
+// if either BEQ or BNE are being used, id[26] = 0(BEQ) 1(BNE)
+Xinvnorz norz invnorz inverter
+Xmakez id[26] norz invnorz specialpcsel mux2
+
+//check if either BEQ or BNE are being executed. If yes,modify the input pcsel to prog counter (F)
+Xcheck pcsel[0] pcsel[1] pcsel[2] specialins and3
+Xmuxspone specialins pcsel[0] specialpcsel interpcsel[0] mux2
+Xmuxsptwo specialins pcsel[1] 0 interpcsel[1] mux2
+Xmuxspthree specialins pcsel[2] 0 interpcsel[2] mux2
+
+
+
+
+
+//making the broff[31:0] using plusfour and extended id[15:0] multiplied by 4 (C)
+Xsumone plusfour[0] 0 0 broff[0] cob[0] FA
+Xsumfour plusfour[1] 0 cob[0] broff[1] cob[1] FA
+Xsumtwo plusfour[17:2] id[15:0] cob[16:1] broff[17:2] cob[17:2] FA
+Xsumthree plusfour[31:18] id_buf#14 cob[30:17] broff[31:18] cob[31:18] FA
+
+
+
+
+//mux for asel before read data goes to alu input (A.4)
+Xaselbuf asel asel_buf buffer_4
+Xmuxfirstbits asel_buf#31 radata[30:0] broff[30:0] aselout[30:0] mux2
+Xmuxsupbit asel radata[31] 0 aselout[31] mux2
+
+//part of (D) generation of norz
+Xnorzgen radata[31:0] norz nor32
+
+
+
+//ALU
+Xaluins alufn[4:0] aselout[31:0] bselout[31:0] ma[31:0] z v n alu
+
+
+// wasel mux
+.connect valOne xp[4:1]
+.connect 0 xp[0]
+Xmuxwasel finalwasel#5 id[25:21] xp[4:0] waselout[4:0] mux2
+
+
+//Register file
+Xregfileins clk finalwerf ra2sel id[20:16] id[15:11] waselout[4:0]   
++ wdata[31:0] radata[31:0] mwd[31:0] regfile
+
+
+//Control Logic
+Xctlins reset id[31:26] pcsel[2:0] wasel asel ra2sel bsel alufn[4:0] wdsel[1:0] werf moe initialwr ctl 
+
+
+//program counter
+Xpcins clk reset finalpcsel[2:0] ia[31:0] broff[31:0] radata[31:0] plusfour[31:0] pc  
+
+.ends
+
+
+//ALU
+
+//full adder required for ARITH logic
+.subckt FA a b ci s co
+      Xnand_one a b nand1op nand2
+      Xnand_two b ci nand2op nand2
+      Xnand_three a ci nand3op nand2
+      Xfinalco nand1op nand2op nand3op co nand3
+      Xexor_one a b aexorb xor2
+      Xfinals aexorb ci s xor2
+.ends
+
+//required for connecting
+.subckt connect a b 
+	.connect a b
+.ends
+
+//reversing required for shifting right
+.subckt REV a[31:0] z[31:0]
+	Xcon a[31:0] z[0:31] connect
+.ends
+
+//32bit NOR required for Z of ARITH logic
+.subckt nor32 A[31:0] z
+	Xone A[0] A[1] A[2] A[3] one nor4
+	Xtwo A[4] A[5] A[6] A[7] two nor4
+	Xthree A[8] A[9] A[10] A[11] three nor4
+	Xfour A[12] A[13] A[14] A[15] four nor4
+	Xfive A[16] A[17] A[18] A[19] five nor4
+	Xsix A[20] A[21] A[22] A[23] six nor4
+	Xseven A[24] A[25] A[26] A[27] seven nor4
+	Xeight A[28] A[29] A[30] A[31] eight nor4
+	Xphaseone one two three four phaseone nand4
+	Xphasetwo five six seven eight phasetwo nand4
+	Xfinal phaseone phasetwo z nor2
+.ends
+
+
+//boolean works that was damn simple :p
+.subckt BOOL alufn[3:0] A[31:0] B[31:0] OUT[31:0] 
+	Xalufnzero alufn[0] alufn_buf[0] buffer_4
+	Xalufnone alufn[1] alufn_buf[1] buffer_4
+	Xalufntwo alufn[2] alufn_buf[2] buffer_4
+	Xalufnthree alufn[3] alufn_buf[3] buffer_4
+	Xbool A[31:0] B[31:0] alufn_buf[0]#32 alufn_buf[1]#32 alufn_buf[2]#32 alufn_buf[3]#32 OUT[31:0] mux4
+.ends
+
+//the ARITH subckt works!!
+.subckt ARITH alufn[1:0] A[31:0] B[31:0] OUT[31:0] Z V N 
+	//exoring B	
+	Xalufnzero alufn[0] alufn_buf[0] buffer_4
+	xinvertb B[31:0] alufn_buf[0]#32 modb[31:0]	xor2 	
+	
+	//full 32 bit adder-subtractor	
+	Xsumone A[0] modb[0] alufn[0] OUT[0] co[0] FA
+	Xsumtwo A[31:1] modb[31:1] co[30:0] OUT[31:1] co[31:1] FA
+
+	//for V	
+	Xanother co[30] co[31] V xor2
+	
+	//for N
+	.connect N OUT[31]	
+	
+	//for Z
+	Xforz OUT[31:0] Z nor32
+.ends
+
+//the shifter works!!!
+.subckt SHIFT alufn[1:0] A[31:0] B[31:0] OUT[31:0] 
+	//decide replacement for vacancies
+	Xvacancy alufn[1] 0 A[31] param  mux2
+	//reverse of A	
+	Xrev A[31:0] reversedA[31:0] REV	
+	//decide left shift of right shift
+	Xalufnzero alufn[0] alufn_buf[0] buffer_4	
+	Xdecide alufn_buf[0]#32 A[31:0] reversedA[31:0] cascin[31:0]  mux2
+	//cascade muxes
+	Xbone B[4] B_buf[4] buffer_4
+	Xbtwo B[2] B_buf[2] buffer_4
+	Xbthree B[3] B_buf[3] buffer_4
+	Xbfour B[1] B_buf[1] buffer_4
+	Xbzero B[0] B_buf[0] buffer_4
+	Xparambuf param param_buf buffer_4 
+
+	Xmo16p1 B_buf[4]#16 cascin[31:16] cascin[15:0] one[31:16]  mux2
+	Xmo16p2 B_buf[4]#16 cascin[15:0] param_buf#16 one[15:0]  mux2
+	Xmo8p1 B_buf[3]#24 one[31:8] one[23:0] two[31:8]  mux2
+	Xmo8p2 B_buf[3]#8 one[7:0] param_buf#8 two[7:0]  mux2
+	Xmo4p1 B_buf[2]#28 two[31:4] two[27:0] three[31:4]  mux2
+	Xmo4p2 B_buf[2]#4 two[3:0] param_buf#4 three[3:0]  mux2
+	Xmo2p1 B_buf[1]#30 three[31:2] three[29:0] four[31:2]  mux2
+	Xmo2p2 B_buf[1]#2 three[1:0] param_buf#2 four[1:0]  mux2
+	Xmo1p1 B_buf[0]#31 four[31:1] four[30:0] five[31:1]  mux2
+	Xmo1p2 B_buf[0]#1 four[0] param_buf#1 five[0]  mux2
+	//reverse output
+	Xrevop five[31:0] reversedfive[31:0] REV
+	//decide final output
+	Xfinal alufn_buf[0]#32 five[31:0] reversedfive[31:0] OUT[31:0] mux2
+.ends
+
+// the comparator subckt works!!
+.subckt CMP alufn3 alufn1 Z V N OUT[31:0]  
+	.connect Z equal
+	Xlesser N V lesser xor2
+	Xlesseq lesser Z lesseq or2
+	Xfinal alufn3 alufn1 equal lesseq lesser 0 OUT[0] mux4
+	.connect OUT[31:1] 0
+.ends
+
+
+
+
+.subckt alu alufn[4:0] a[31:0] b[31:0] out[31:0] z v n
+
+//*** Generate outputs from each of BOOL, SHIFT, ARITH, CMP subcircuits: 
+xbool alufn[3:0] a[31:0] b[31:0] boolout[31:0] BOOL
+xshift alufn[1:0] a[31:0] b[31:0] shiftout[31:0] SHIFT
+xarith alufn[1:0] a[31:0] b[31:0] arithout[31:0] z v n ARITH
+xcmp alufn[3] alufn[1] z v n cmpout[31:0] CMP
+
+//*** Combine them, using three multiplexors:
+	Xalufnone alufn[4] alufn_buf[4] buffer_4
+	Xalufntwo alufn[2] alufn_buf[2] buffer_4
+	Xalufnthree alufn[3] alufn_buf[3] buffer_4
+xmux1 alufn_buf[4]#32 nonbool[31:0] boolout[31:0] out[31:0] mux2
+xmux2 alufn_buf[2]#32 arithshift[31:0] cmpout[31:0] nonbool[31:0] mux2
+xmux3 alufn_buf[3]#32 arithout[31:0] shiftout[31:0] arithshift[31:0] mux2
+
+.ends
+
+
+.plot clk
+.plot reset
+.plot irq
+.plot ia[31:0]
+.plot id[31:0]
+.plot ma[31:0]
+.plot moe
+.plot mrd[31:0]
+.plot wr
+.plot mwd[31:0]
+.plot betaop(id[31:26])
+.plot reg(id[20:16])
+.plot reg(id[15:11])
+.plot reg(id[25:21])
